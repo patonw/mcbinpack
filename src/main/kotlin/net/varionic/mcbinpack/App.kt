@@ -3,6 +3,82 @@
  */
 package net.varionic.mcbinpack
 
+import com.fasterxml.jackson.annotation.JsonTypeInfo
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
+import io.ktor.application.call
+import io.ktor.application.install
+import io.ktor.features.ContentNegotiation
+import io.ktor.http.cio.websocket.Frame
+import io.ktor.http.cio.websocket.readText
+import io.ktor.http.content.defaultResource
+import io.ktor.http.content.resources
+import io.ktor.http.content.static
+import io.ktor.jackson.jackson
+import io.ktor.request.receive
+import io.ktor.response.respond
+import io.ktor.routing.Routing
+import io.ktor.routing.get
+import io.ktor.routing.post
+import io.ktor.routing.routing
+import io.ktor.server.engine.embeddedServer
+import io.ktor.server.netty.Netty
+import io.ktor.websocket.WebSockets
+import io.ktor.websocket.webSocket
+import io.vavr.collection.List
+import io.vavr.kotlin.toVavrList
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.TickerMode
+import kotlinx.coroutines.channels.ticker
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+
+val demoData = List.of(
+        Item(30, 41),
+        Item(32, 40),
+        Item(30, 37),
+        Item(30, 47),
+        Item(25, 25),
+        Item(35, 30),
+        Item(60, 42),
+        Item(37, 40),
+        Item(59, 40),
+        Item(30, 80),
+        Item(10, 13),
+        Item(25, 25),
+        Item(25, 30),
+        Item(30, 77),
+        Item(10, 12),
+        Item(25, 25),
+        Item(29, 30),
+        Item(25, 25),
+        Item(8, 26),
+        Item(8, 30),
+        Item(5, 20),
+        Item(30, 40),
+        Item(30, 40),
+        Item(30, 40),
+        Item(30, 40),
+        Item(30, 40),
+        Item(25, 25),
+        Item(30, 30),
+        Item(60, 32),
+        Item(35, 44),
+        Item(60, 40),
+        Item(24, 81),
+        Item(10, 10),
+        Item(25, 25),
+        Item(30, 32),
+        Item(39, 85),
+        Item(10, 10),
+        Item(25, 25),
+        Item(30, 30),
+        Item(25, 25),
+        Item(8, 30),
+        Item(5, 20),
+        Item(30, 40)
+).sortedByDescending { it.width * it.height }.toVavrList()
+
 class App {
     val greeting: String
         get() {
@@ -11,5 +87,107 @@ class App {
 }
 
 fun main(args: Array<String>) {
-    println(App().greeting)
+    doKtor()
+}
+
+@JsonTypeInfo(use = JsonTypeInfo.Id.NAME)
+data class ProgressReport(val value: Int, val max: Int, val pct: Int) {
+    constructor(i: Int, n: Int): this(i, n, (100*i)/n)
+}
+
+// TODO dependency injection
+fun doKtor() {
+    embeddedServer(Netty, 8181) {
+        install(ContentNegotiation) {
+            jackson {
+                // Configure Jackson's ObjectMapper here
+            }
+        }
+
+        install(WebSockets)
+
+        routing {
+            static("/") {
+                resources("web")
+                defaultResource("web/index.html")
+            }
+
+            // Generates a random example problem
+            get("/generate") {
+                val query = SampleQuery(220, 180, demoData.toJavaList())
+                call.respond(query)
+            }
+
+            // Generates a single solution to the query
+            post("/sample") {
+                val query = call.receive<SampleQuery>()
+                println("Query is $query")
+
+                val solver = RandomGuillotineFF()
+                val bin = Bin.create(query.width, query.height)
+                val sample = solver.insertItems(bin, query.items?.toVavrList()?: demoData)
+
+                call.respond(JsonRenderer().render(sample))
+            }
+
+            handleSocket()
+        }
+    }.start(wait = true)
+}
+
+private fun Routing.handleSocket() {
+    val mapper = jacksonObjectMapper() // TODO inject this
+
+    webSocket("/ws") {
+        // Track running task per socket to cancel on new query
+        var lastTask: Job? = null
+
+        // Rate limit solutions sent back to client *per socket*
+        val throttle = ticker(250, 0, mode = TickerMode.FIXED_PERIOD)
+
+        for (frame in this.incoming) {
+            println("New frame! $frame")
+            when (frame) {
+                is Frame.Text -> {
+                    if (lastTask?.isActive == true) {
+                        lastTask.cancel()
+                        println("Cancelled old task $lastTask")
+                    }
+
+                    val text = frame.readText()
+                    val query = mapper.readValue<SampleQuery>(text)
+                    val seed = Bin.create(query.width, query.height)
+                    val work = query.items?.toVavrList() ?: demoData
+
+                    val onBest: suspend (Bin, Int) -> Unit = { sample, score ->
+                        println("New solution with score $score")
+
+                        if (withTimeoutOrNull(1) { throttle.receive() } != null) {
+                            val resp = mapper.writeValueAsString(JsonRenderer().render(sample))
+                            outgoing.send(Frame.Text(resp))
+                        }
+                    }
+
+                    val onProgress: suspend (Int, Int) -> Unit = { i, n ->
+                        val resp = mapper.writeValueAsString(ProgressReport(i, n))
+                        outgoing.send(Frame.Text(resp))
+                    }
+
+                    // TODO factory/builder for solvers
+                    val mcts = MCTSGuillotine(seed, work, onBest = onBest, onProgress = onProgress)
+                    val solver = RandomGuillotineFF(onBest = onBest, onProgress = onProgress)
+
+                    lastTask = launch {
+                        when (query.solver) {
+                            "mcts" -> mcts.solve()
+                            else -> solver.solve(seed, work)
+                        }
+
+                        println("Solver done!")
+                    }
+
+                }
+            }
+        }
+    }
 }
