@@ -243,8 +243,11 @@ class App extends Component {
         this.specRef = createRef();
         this.genRef = createRef();
 
+        var url = new URL('/ws', window.location.href);
+        url.protocol = url.protocol.replace('http', 'ws');
+
         this.sock = webSocket({
-            url: "ws://localhost:8181/ws",
+            url: url.href,
             serializer: (msg) => msg,
         })
 
