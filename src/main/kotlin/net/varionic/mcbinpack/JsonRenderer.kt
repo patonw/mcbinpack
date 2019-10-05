@@ -4,7 +4,22 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo
 
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME)
 data class SampleResult(val width: Int, val height: Int, val score: Int, val splits: List<Divider>, val items: List<Rect>, val rejects: List<Rect>)
-data class SampleQuery(val width: Int, val height: Int, val items: List<Item>?, val solver: String = "random-guillotine")
+
+data class MCTSParams(
+        val rounds: Int = 300,
+        val quota: Int = 500,
+        val batchSize: Int = 3,
+        val scheduler: String = "sigmoid",
+        val alpha: Double = 0.5,
+        val gamma: Double = 8.0)
+
+
+data class SampleQuery(
+        val solver: String = "random-guillotine",
+        val params: MCTSParams? = null,
+        val width: Int = 200,
+        val height: Int = 200,
+        val items: List<Item>? = null)
 
 class JsonRenderer: BaseRenderer<SampleResult>() {
     override fun render(bin: Bin): SampleResult {

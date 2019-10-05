@@ -2,7 +2,7 @@ package net.varionic.mcbinpack
 
 import org.slf4j.LoggerFactory
 
-open class Guillotine {
+abstract class Guillotine: Solver {
     companion object {
         val log = LoggerFactory.getLogger(Guillotine::class.java)
     }

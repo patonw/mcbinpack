@@ -27,6 +27,7 @@ import io.ktor.websocket.WebSockets
 import io.ktor.websocket.webSocket
 import io.vavr.collection.List
 import io.vavr.kotlin.toVavrList
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.TickerMode
 import kotlinx.coroutines.channels.ticker
@@ -114,7 +115,7 @@ fun doKtor() {
 
             // Generates a random example problem
             get("/generate") {
-                val query = SampleQuery(220, 180, demoData.toJavaList())
+                val query = SampleQuery("mcts", MCTSParams(), 200, 200, demoData.toJavaList())
                 call.respond(query)
             }
 
@@ -143,7 +144,7 @@ private fun Routing.handleSocket() {
         var lastTask: Job? = null
 
         // Rate limit solutions sent back to client *per socket*
-        val throttle = ticker(250, 0, mode = TickerMode.FIXED_PERIOD)
+        val throttle = ticker(1, 0, mode = TickerMode.FIXED_PERIOD)
 
         for (frame in this.incoming) {
             println("New frame! $frame")
@@ -157,7 +158,7 @@ private fun Routing.handleSocket() {
                     val text = frame.readText()
                     val query = mapper.readValue<SampleQuery>(text)
                     val seed = Bin.create(query.width, query.height)
-                    val work = query.items?.toVavrList() ?: demoData
+                    val work = (query.items ?: demoData).sortedByDescending { it.width * it.height }.toVavrList()
 
                     val onBest: suspend (Bin, Int) -> Unit = { sample, score ->
                         println("New solution with score $score")
@@ -173,19 +174,33 @@ private fun Routing.handleSocket() {
                         outgoing.send(Frame.Text(resp))
                     }
 
-                    // TODO factory/builder for solvers
-                    val mcts = MCTSGuillotine(seed, work, onBest = onBest, onProgress = onProgress)
-                    val solver = RandomGuillotineFF(onBest = onBest, onProgress = onProgress)
+                    val params = query.params ?: MCTSParams()
 
-                    lastTask = launch {
-                        when (query.solver) {
-                            "mcts" -> mcts.solve()
-                            else -> solver.solve(seed, work)
-                        }
-
-                        println("Solver done!")
+                    val sched = when (params.scheduler.toLowerCase()) {
+                        "constant" -> MCTSGuillotine.constant(params.alpha)
+                        "linear" -> MCTSGuillotine.linear(params.alpha)
+                        "quadratic" -> MCTSGuillotine.quadratic(params.alpha, params.gamma)
+                        "sigmoid" -> MCTSGuillotine.sigmoid(params.alpha, params.gamma)
+                        "slowramp" -> MCTSGuillotine.slowRamp(params.alpha, params.gamma)
+                        else -> MCTSGuillotine.exponential(params.alpha, params.gamma)
                     }
 
+                    // TODO factory/builder for solvers
+                    val solver = when (query.solver) {
+                        "mcts" -> MCTSGuillotine(
+                                rounds = params.rounds,
+                                quota = params.quota,
+                                batchSize = params.batchSize,
+                                sched = sched,
+                                onBest = onBest,
+                                onProgress = onProgress)
+                        else -> RandomGuillotineFF(onBest = onBest, onProgress = onProgress)
+                    }
+
+                    lastTask = GlobalScope.launch {
+                        solver.solve(seed, work)
+                        println("Solver done!")
+                    }
                 }
             }
         }

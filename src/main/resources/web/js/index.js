@@ -1,16 +1,79 @@
 const { h, Component, createRef, render } = preact;
-const { range, interval, defer, fromEvent, Subject } = rxjs;
-const { map, filter, catchError, of, switchMap, tap, share, pluck } = rxjs.operators;
+const { range, interval, defer, fromEvent, Subject, merge } = rxjs;
+const { map, filter, catchError, of, switchMap, tap, share, pluck, withLatestFrom, retry } = rxjs.operators;
 const { webSocket } = rxjs.webSocket;
 const { ajax } = rxjs.ajax;
 
 const html = htm.bind(h);
 
 const spec = localStorage.getItem("spec") || `{
+    "solver": "mcts",
     "width": 200,
     "height": 300,
     "items": []
 }`
+
+var vlSpec = {
+   $schema: 'https://vega.github.io/schema/vega-lite/v4.json',
+   data: {name: 'table'},
+   width: 400,
+
+   autosize: {
+    type: "fit",
+    contains: "padding",
+    resize: true
+   },
+   mark: {
+    type: 'line',
+    point: true
+   },
+   encoding: {
+     x: {field: 'step', type: 'quantitative', scale: {zero: false}},
+     y: {field: 'score', type: 'quantitative', scale: {zero: false}},
+//     color: {field: 'category', type: 'nominal'}
+   }
+ };
+
+class History extends Component {
+    constructor(props) {
+        super(props);
+        this.ref = createRef();
+    }
+
+    shouldComponentUpdate() {
+        return false;
+    }
+
+    componentDidMount() {
+        const { source } = this.props;
+
+        vegaEmbed(this.ref.current, vlSpec).then(chart => {
+            console.log("Started vega chart ", chart);
+            source.subscribe(evt => {
+                if (evt.type == "reset") {
+                    chart.view.remove('table', () => true).run();
+                }
+                else if (evt.step === 0) {
+                    const changeset = vega.changeset()
+                        .remove(() => true)
+                        .insert(evt);
+                    chart.view.change('table', changeset).run();
+                }
+                else
+                    chart.view.insert('table', evt).run();
+            });
+        });
+
+    }
+
+    render() {
+        return html`
+            <div>
+                <div ref=${this.ref}></div>
+            </div>
+        `
+    }
+}
 
 class Visualizer extends Component {
     constructor(props) {
@@ -180,24 +243,18 @@ class App extends Component {
         this.specRef = createRef();
         this.genRef = createRef();
 
-        this.trigger = new Subject();
-        this.solution = this.trigger.pipe(
-            tap(evt => console.log("Triggered ", evt)),
-            switchMap(() => this.sampleRequest()),
-            pluck("response"),
-            tap(evt => console.log("Solution is ", evt)),
-            share()
-        );
-
         this.sock = webSocket({
             url: "ws://localhost:8181/ws",
             serializer: (msg) => msg,
         })
 
         const sock$ = this.sock.pipe(
-            tap(evt => console.log("Socket event", evt)),
+//            tap(evt => console.log("Socket event", evt)),
             share()
         )
+
+        this.reset = new Subject();
+        this.finish = new Subject();
 
         this.solution = sock$.pipe(
             filter(evt => evt["@type"] === "SampleResult"),
@@ -207,6 +264,31 @@ class App extends Component {
             filter(evt => evt["@type"] === "ProgressReport"),
         )
 
+        this.history = merge(
+            this.solution.pipe(
+                withLatestFrom(this.progress),
+                map(([sol, prog]) => ({
+                    type: "score",
+                    step: prog.value,
+                    score: sol.score,
+                })),
+            ),
+            this.reset.pipe(
+                map(() => ({
+                    type: "reset"
+                }))
+            ),
+            this.progress.pipe(
+                filter(prog => prog.pct === 100),
+                withLatestFrom(this.solution),
+                map(([prog, sol]) => ({
+                    type: "score",
+                    step: prog.value,
+                    score: sol.score,
+                }))
+            )
+        );
+
         this.state = {
             spec
         };
@@ -215,7 +297,7 @@ class App extends Component {
     sampleRequest() {
         const { spec } = this.state;
         const body = spec
-        console.log("Sending", body);
+//        console.log("Sending", body);
 
         const req$ = ajax({
             url: "/sample",
@@ -239,8 +321,8 @@ class App extends Component {
         // TODO just go back to onClick handler
         source$.subscribe(evt => {
             // Can't figure out how to break the cyclic dep using defer()
+            this.reset.next();
             this.sock.next(that.state.spec);
-            this.trigger.next(that.state.spec);
         })
 
         if (this.genRef.current) {
@@ -259,6 +341,10 @@ class App extends Component {
 
     updateSpec(evt) {
         const spec = evt.target.value;
+        this.persistSpec(spec);
+    }
+
+    persistSpec(spec) {
         localStorage.setItem("spec", spec);
         this.setState({
             ...this.state,
@@ -266,22 +352,68 @@ class App extends Component {
          });
     }
 
+    changeSolver() {
+        const { spec } = this.state;
+        const parsed = JSON.parse(spec);
+        if (parsed.solver === "mcts")
+            parsed.solver = "guillotineFF";
+        else
+            parsed.solver = "mcts";
+
+        const newSpec = JSON.stringify(parsed, null, 2);
+        this.persistSpec(newSpec);
+    }
+
+    generateItems(count) {
+        const { spec } = this.state;
+        const parsed = JSON.parse(spec);
+        var i=0;
+        while (i<count) {
+            const width = Math.ceil(Math.random() * 50);
+            const height = Math.ceil(Math.random() * 50);
+
+            if (width < 10 || height < 10)
+                continue;
+
+            if (width*height < 200) {
+                continue;
+            }
+
+            parsed.items.push({
+                width,
+                height,
+            })
+
+            i++;
+        }
+
+        const newSpec = JSON.stringify(parsed, null, 2);
+        this.persistSpec(newSpec);
+    }
+
     render() {
         const time = new Date(this.state.time).toLocaleTimeString();
         const { spec } = this.state;
         const onChange = this.updateSpec.bind(this)
 
+        // TODO fix button layout
         return html`
-            <div class="container has-text-centered">
-                <div class="columns">
-                    <div class="column is-4 is-offset-2">
-                        <div class="box">
-                            <textarea class="textarea" rows="16" ref=${this.specRef} onChange=${onChange}>${spec}</textarea>
-                            <button class="button" ref=${this.genRef}>Generate</button>
+            <div>
+            <div class="container">
+            <aside class="menu">
+                <button class="button" ref=${this.genRef}>Default Spec</button>
+                <button class="button" onClick=${() => this.changeSolver()} >Next Solver</button>
+                <button class="button" onClick=${() => this.generateItems(10)}>Generate Items (10)</button>
+            </aside>
+            <div class="tile is-ancestor">
+                <div class="tile">
+                    <div class="tile is-parent is-vertical">
+                        <div class="box tile is-child">
+                            <textarea class="textarea" style="width:100%; height:100%" rows="20" ref=${this.specRef} onChange=${onChange}>${spec}</textarea>
                         </div>
                     </div>
-                    <div class="column is-4">
-                        <div class="box">
+                    <div class="tile is-parent is-vertical is-6">
+                        <div class="box tile is-child">
                             <div class="field">
                                 <${SolutionBox} width=400 height=400 time=${time} source=${this.solution}/>
                             </div>
@@ -290,8 +422,13 @@ class App extends Component {
                             </div>
                             <${ProgressBar} source=${this.progress} />
                         </div>
+                        <div class="box tile is-child">
+                            <${History} source=${this.history} />
+                        </div>
                     </div>
                 </div>
+            </div>
+            </div>
             </div>
         `;
     }

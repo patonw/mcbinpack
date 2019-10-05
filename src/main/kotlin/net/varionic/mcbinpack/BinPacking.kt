@@ -91,7 +91,15 @@ fun Bin.countItems() = traverse({ _, _, node ->
  * Computes a score based on the area of rejected items.
  *
  */
-fun computeScore(bin: Bin) = bin.rejects.map { it.height * it.width }.sum().toInt()
+//fun computeScore(bin: Bin) = bin.rejects.map { it.height * it.width }.sum().toInt()
+
+val vacancyArea: (Point, Point, Node) -> Int = { _,_,node -> when(node) {
+    is Vacancy -> node.width * node.height
+    else -> 0
+}}
+
+// Wasted space per bin
+fun computeScore(bin: Bin) = bin.traverse(vacancyArea) { a, b -> a + b }
 
 data class StatPad(val n: Int, val min: Int, val mean: Double, val vrc: Double) {
     // Combine statistics of two subsamples
@@ -119,5 +127,5 @@ data class StatPad(val n: Int, val min: Int, val mean: Double, val vrc: Double) 
         }
     }
 
-    fun lcb(z: Double = 2.0) = if (n > 0) mean - z * sqrt(vrc/n) else Double.NEGATIVE_INFINITY
+    fun lcb(z: Double = 2.0) = if (n > 1) mean - z * sqrt(vrc/n) else Double.NEGATIVE_INFINITY
 }
