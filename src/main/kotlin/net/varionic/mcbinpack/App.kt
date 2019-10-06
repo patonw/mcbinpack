@@ -93,7 +93,7 @@ fun main(args: Array<String>) {
 
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME)
 data class ProgressReport(val value: Int, val max: Int, val pct: Int) {
-    constructor(i: Int, n: Int): this(i, n, (100*i)/n)
+    constructor(i: Int, n: Int) : this(i, n, (100 * i) / n)
 }
 
 // TODO dependency injection
@@ -125,8 +125,8 @@ fun doKtor() {
                 println("Query is $query")
 
                 val solver = RandomGuillotineFF()
-                val bin = Bin.create(query.width, query.height)
-                val sample = solver.insertItems(bin, query.items?.toVavrList()?: demoData)
+                val bin = Bin.empty(query.width, query.height)
+                val sample = solver.insertItems(bin, query.items?.toVavrList() ?: demoData)
 
                 call.respond(JsonRenderer().render(sample))
             }
@@ -146,64 +146,72 @@ private fun Routing.handleSocket() {
         // Rate limit solutions sent back to client *per socket*
         val throttle = ticker(1, 0, mode = TickerMode.FIXED_PERIOD)
 
-        for (frame in this.incoming) {
-            println("New frame! $frame")
-            when (frame) {
-                is Frame.Text -> {
-                    if (lastTask?.isActive == true) {
-                        lastTask.cancel()
-                        println("Cancelled old task $lastTask")
-                    }
-
-                    val text = frame.readText()
-                    val query = mapper.readValue<SampleQuery>(text)
-                    val seed = Bin.create(query.width, query.height)
-                    val work = (query.items ?: demoData).sortedByDescending { it.width * it.height }.toVavrList()
-
-                    val onBest: suspend (Bin, Int) -> Unit = { sample, score ->
-                        println("New solution with score $score")
-
-                        if (withTimeoutOrNull(1) { throttle.receive() } != null) {
-                            val resp = mapper.writeValueAsString(JsonRenderer().render(sample))
-                            outgoing.send(Frame.Text(resp))
+        try {
+            for (frame in this.incoming) {
+                println("New frame! $frame")
+                when (frame) {
+                    is Frame.Text -> {
+                        if (lastTask?.isActive == true) {
+                            lastTask.cancel()
+                            println("Cancelled old task $lastTask")
                         }
-                    }
 
-                    val onProgress: suspend (Int, Int) -> Unit = { i, n ->
-                        val resp = mapper.writeValueAsString(ProgressReport(i, n))
-                        outgoing.send(Frame.Text(resp))
-                    }
+                        val text = frame.readText()
+                        val query = mapper.readValue<SampleQuery>(text)
+                        val seed = Bin.empty(query.width, query.height)
+                        val work = (query.items ?: demoData).sortedByDescending { it.width * it.height }.toVavrList()
 
-                    val params = query.params ?: MCTSParams()
+                        val onBest: suspend (Bin, Int) -> Unit = { sample, score ->
+                            launch {
+                                println("New solution with score $score")
 
-                    val sched = when (params.scheduler.toLowerCase()) {
-                        "constant" -> MCTSGuillotine.constant(params.alpha)
-                        "linear" -> MCTSGuillotine.linear(params.alpha)
-                        "quadratic" -> MCTSGuillotine.quadratic(params.alpha, params.gamma)
-                        "sigmoid" -> MCTSGuillotine.sigmoid(params.alpha, params.gamma)
-                        "slowramp" -> MCTSGuillotine.slowRamp(params.alpha, params.gamma)
-                        else -> MCTSGuillotine.exponential(params.alpha, params.gamma)
-                    }
+                                if (withTimeoutOrNull(1) { throttle.receive() } != null) {
+                                    val resp = mapper.writeValueAsString(JsonRenderer().render(sample))
+                                    outgoing.send(Frame.Text(resp))
+                                }
+                            }
+                        }
 
-                    // TODO factory/builder for solvers
-                    val solver = when (query.solver) {
-                        "mcts" -> MCTSGuillotine(
-                                rounds = params.rounds,
-                                quota = params.quota,
-                                batchSize = params.batchSize,
-                                cores = params.cores,
-                                sched = sched,
-                                onBest = onBest,
-                                onProgress = onProgress)
-                        else -> RandomGuillotineFF(onBest = onBest, onProgress = onProgress)
-                    }
+                        val onProgress: suspend (Int, Int) -> Unit = { i, n ->
+                            launch {
+                                val resp = mapper.writeValueAsString(ProgressReport(i, n))
+                                outgoing.send(Frame.Text(resp))
+                            }
+                        }
 
-                    lastTask = GlobalScope.launch {
-                        solver.solve(seed, work)
-                        println("Solver done!")
+                        val params = query.params ?: MCTSParams()
+
+                        val sched = params.makeScheduler()
+
+                        // TODO factory/builder for solvers
+                        val solver = when (query.solver) {
+                            "mcts" -> MCTSGuillotine(
+                                    rounds = params.rounds,
+                                    quota = params.quota,
+                                    batchSize = params.batchSize,
+                                    cores = params.cores,
+                                    sched = sched,
+                                    onBest = onBest,
+                                    onProgress = onProgress)
+                            else -> RandomGuillotineFF(onBest = onBest, onProgress = onProgress)
+                        }
+
+                        lastTask = GlobalScope.launch {
+                            solver.solve(seed, work)
+                            println("Solver done!")
+                        }
                     }
                 }
             }
         }
+        finally {
+            if (lastTask?.isActive == true) {
+                println("Channel closed. Cancelled old task $lastTask")
+                lastTask.cancel()
+            }
+            else
+                println("Channel closed")
+        }
     }
 }
+

@@ -13,14 +13,27 @@ import kotlin.random.Random
  */
 class RandomGuillotineFF(
         val n: Int = 100_000,
+        val reportInterval: Int = 500,
         val onBest: suspend (Bin, Int) -> Unit = { _, _ -> Unit },
         val onProgress: suspend (Int, Int) -> Unit = { _, _ -> Unit }
 ) : Guillotine() {
-    fun insertItem(bin: Bin, item: Item): Bin = insertItem(
-            bin,
-            if (Random.nextBoolean()) item else item.t(),
-            if (Random.nextBoolean()) this::makeHVSplit else this::makeVHSplit)
-    fun insertItems(bin: Bin, items: List<Item>): Bin = items.fold(bin) { acc, item -> insertItem(acc, item) }
+
+    /**
+     * Uses a random transpose, random splitter and random vacancy selection
+     */
+    fun insertItemRandomly(bin: Bin, origItem: Item): Bin {
+        val item = if (Random.nextBoolean()) origItem else origItem.t()
+        val splitter = if (Random.nextBoolean()) Companion::makeHVSplit else Companion::makeVHSplit
+
+        val target = bin.vacancies.shuffle().firstOrNull {
+            it.height >= item.height && it.width >= item.width
+        }
+
+        target ?: return bin.copy(rejects = bin.rejects.prepend(item))
+        return insertItem(bin, item, target, splitter)
+    }
+
+    fun insertItems(bin: Bin, items: List<Item>): Bin = items.fold(bin) { acc, item -> insertItemRandomly(acc, item) }
 
     override suspend fun solve(bin: Bin, items: List<Item>): Bin {
         var bestScore = Int.MAX_VALUE
@@ -36,7 +49,7 @@ class RandomGuillotineFF(
                 solution = candidate
                 onBest(candidate, score)
             }
-            if (it%500 == 0)
+            if (it % reportInterval == 0)
                 onProgress(it, n)
             yield()
         }
@@ -45,4 +58,5 @@ class RandomGuillotineFF(
 
         return solution
     }
+
 }

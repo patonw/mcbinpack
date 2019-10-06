@@ -37,7 +37,7 @@ class RandomGuillotineTest {
 
     @Test
     fun testInsertItems() {
-        var bin = Bin(154, 128, Vacancy(154, 128))
+        var bin = Bin.empty(154, 128)
         val items = List.of(
                 Item(30, 40),
                 Item(30, 40),
@@ -69,5 +69,6 @@ class RandomGuillotineTest {
         bin = sampler.insertItems(bin, items)
 
         assertThat(bin.countItems() + bin.rejects.length(), ist(items.length()))
+        println(bin)
     }
 }

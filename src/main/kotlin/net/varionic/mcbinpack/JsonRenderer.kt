@@ -14,6 +14,16 @@ data class MCTSParams(
         val alpha: Double = 0.5,
         val gamma: Double = 8.0)
 
+fun MCTSParams.makeScheduler(): (Double) -> Double {
+    return when (scheduler.toLowerCase()) {
+        "constant" -> MCTSGuillotine.constant(alpha)
+        "linear" -> MCTSGuillotine.linear(alpha)
+        "quadratic" -> MCTSGuillotine.quadratic(alpha, gamma)
+        "sigmoid" -> MCTSGuillotine.sigmoid(alpha, gamma)
+        "slowramp" -> MCTSGuillotine.slowRamp(alpha, gamma)
+        else -> MCTSGuillotine.exponential(alpha, gamma)
+    }
+}
 
 data class SampleQuery(
         val solver: String = "random-guillotine",
