@@ -191,6 +191,7 @@ private fun Routing.handleSocket() {
                                 rounds = params.rounds,
                                 quota = params.quota,
                                 batchSize = params.batchSize,
+                                cores = params.cores,
                                 sched = sched,
                                 onBest = onBest,
                                 onProgress = onProgress)

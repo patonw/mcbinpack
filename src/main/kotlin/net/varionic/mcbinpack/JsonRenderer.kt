@@ -9,6 +9,7 @@ data class MCTSParams(
         val rounds: Int = 300,
         val quota: Int = 500,
         val batchSize: Int = 3,
+        val cores: Int = 1,
         val scheduler: String = "sigmoid",
         val alpha: Double = 0.5,
         val gamma: Double = 8.0)

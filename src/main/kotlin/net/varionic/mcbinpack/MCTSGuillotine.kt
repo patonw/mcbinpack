@@ -3,6 +3,9 @@ package net.varionic.mcbinpack
 import io.vavr.Tuple
 import io.vavr.collection.List
 import io.vavr.kotlin.toVavrList
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
 import org.slf4j.LoggerFactory
 import org.slf4j.MarkerFactory
@@ -24,17 +27,20 @@ class SearchTree(val partial: Bin, val items: List<Item>, val label: String = ""
     var solution: Bin? = null
     var descStats: StatPad = StatPad.empty
     var localStats: StatPad = StatPad.empty
-    val cutoff = 1.0/(depth+1)  // Artificially push work further from root.
+    val cutoff = 1.0 / (depth + 1)  // Artificially push work further from root.
 
-    private fun simulate(): Pair<Bin,Int> {
+    private fun simulate(): Pair<Bin, Int> {
         val result = items.fold(partial) { bin, item -> sampler.insertItem(bin, item) }
         val score = lossFunc(result)
         //samples.add(score)
 
-        if (score < bestScore) {
+        // TODO lock-free update
+        synchronized(this) {
+            if (score < bestScore) {
 //            if (log.isInfoEnabled(marker)) log.info(marker, "New best $score @ $label with ${work.size()} items left to go")
-            bestScore = score
-            solution = result
+                bestScore = score
+                solution = result
+            }
         }
 
         return result to score
@@ -55,7 +61,7 @@ class SearchTree(val partial: Bin, val items: List<Item>, val label: String = ""
     fun leafDepths(): List<Int> {
         if (children.isEmpty())
             return List.of(0)
-        return children.flatMap { it.leafDepths() }.map { it + 1}.toVavrList()
+        return children.flatMap { it.leafDepths() }.map { it + 1 }.toVavrList()
     }
 }
 
@@ -63,6 +69,7 @@ class MCTSGuillotine(
         val sampler: Guillotine = RandomGuillotineFF(),
         val rounds: Int = 300,
         val quota: Int = 500,
+        val cores: Int = 1,
         val batchSize: Int = 3,
         val sched: (Double) -> Double = quadratic(),
         val onBest: suspend (Bin, Int) -> Unit = { _, _ -> Unit },
@@ -96,13 +103,13 @@ class MCTSGuillotine(
         // Logistic annealing schedule: [0.5, 1)
         fun sigmoid(alpha: Double = 0.5, gamma: Double = 8.0): (Double) -> Double {
             val beta = 1 - alpha
-            return { alpha + beta * (2.0 / (1 + exp(-gamma * it )) - 1)}
+            return { alpha + beta * (2.0 / (1 + exp(-gamma * it)) - 1) }
         }
 
         // Logistic-ish but with slow ramp up and configurable initial value. [alpha, 1)
         fun slowRamp(alpha: Double = 0.5, gamma: Double = 8.0): (Double) -> Double {
             val beta = 1 - alpha
-            return { alpha + beta / (1 + exp(-gamma * (2.0*it - 1)))}
+            return { alpha + beta / (1 + exp(-gamma * (2.0 * it - 1))) }
         }
     }
 
@@ -117,18 +124,18 @@ class MCTSGuillotine(
         val remainder = node.items.tail()
 
         val vhChild = sampler.insertItem(node.partial, item, this::makeVHSplit)
-        node.children.add(SearchTree(vhChild, remainder, "${node.label}/V", node.depth+1))
+        node.children.add(SearchTree(vhChild, remainder, "${node.label}/V", node.depth + 1))
 
         val vhtChild = sampler.insertItem(node.partial, item.t(), this::makeVHSplit)
-        node.children.add(SearchTree(vhtChild, remainder, "${node.label}/V'", node.depth+1))
+        node.children.add(SearchTree(vhtChild, remainder, "${node.label}/V'", node.depth + 1))
 
         val hvChild = sampler.insertItem(node.partial, item, this::makeHVSplit)
-        node.children.add(SearchTree(hvChild, remainder, "${node.label}/H", node.depth+1))
+        node.children.add(SearchTree(hvChild, remainder, "${node.label}/H", node.depth + 1))
 
         val hvtChild = sampler.insertItem(node.partial, item.t(), this::makeHVSplit)
-        node.children.add(SearchTree(hvtChild, remainder, "${node.label}/H'", node.depth+1))
+        node.children.add(SearchTree(hvtChild, remainder, "${node.label}/H'", node.depth + 1))
 
-        node.children.add(SearchTree(node.partial.reject(item), remainder, "${node.label}/R", node.depth+1))
+        node.children.add(SearchTree(node.partial.reject(item), remainder, "${node.label}/R", node.depth + 1))
     }
 
     // Gather debugging information
@@ -162,11 +169,13 @@ class MCTSGuillotine(
 
             // If this is a non-terminal state and the current node is a leaf, expand it
             // and run some simulations to populate stats for child selection.
-            if (node.children.isEmpty()) {
-                // However, don't expand unless node has sufficient samples to prevent creating
-                // lots of one-off nodes that are never reached more than a few times.
-                if (node.localStats.n >= node.depth)
-                    expand(node)
+            synchronized(node.children) {
+                if (node.children.isEmpty()) {
+                    // However, don't expand unless node has sufficient samples to prevent creating
+                    // lots of one-off nodes that are never reached more than a few times.
+                    if (node.localStats.n >= node.depth)
+                        expand(node)
+                }
             }
 
             // Only examine one child per traversal, but skip simulating nodes that already have a lot of local samples
@@ -175,26 +184,44 @@ class MCTSGuillotine(
             // Recursive call
             step(child, quota)
 
-            // Propagate results back up the tree
-            if (child.bestScore < node.bestScore) {
-                node.bestScore = child.bestScore
-                node.solution = child.solution
+            var emitBest = false
 
-                if (node === root) {
-                    onBest(child.solution!!, child.bestScore)
+            val (childScore, childSolution) = synchronized(child) {
+                (child.bestScore to child.solution)
+            }
+
+            // Propagate results back up the tree
+            synchronized(node) {
+                // TODO lock-free update
+                if (childScore < node.bestScore) {
+                    node.bestScore = childScore
+                    node.solution = childSolution
+
+                    if (node === root) {
+                        emitBest = true
+                    }
                 }
             }
 
             // TODO remove this debugging logic
-            if (child.bestScore < root.bestScore) {
-                log.debug(">>> New global best ${child.bestScore} at ${child.label} <<<")
+            synchronized(root) {
+                // TODO use lock-free updates
+                if (childScore < root.bestScore) {
+                    log.debug(">>> New global best ${childScore} at ${child.label} <<<")
 
-                root.bestScore = child.bestScore
-                root.solution = child.solution
-                onBest(child.solution!!, child.bestScore)
+                    root.bestScore = childScore
+                    root.solution = childSolution
+                    emitBest = true
+                }
             }
 
-            node.descStats = node.children.map { it.descStats }.fold(node.localStats) { a,b -> a+b }
+            if (emitBest)
+                onBest(childSolution!!, childScore)
+
+            synchronized(node) {
+                // TODO prevent race condition on descStats of children
+                node.descStats = node.children.map { it.descStats }.fold(node.localStats) { a, b -> a + b }
+            }
         }
 
         fun selectChild(node: SearchTree): SearchTree? = when {
@@ -206,15 +233,24 @@ class MCTSGuillotine(
         suspend fun solve(): Bin {
             onProgress(0, rounds)
             (1..rounds).forEach {
-                log.info("Starting round $it. Focus = $focus")
+                log.info("Starting round $it. Cores = $cores. Focus = $focus")
                 val ctr = AtomicInteger(quota)
-                while (ctr.get() > 0)
-                    step(root, ctr)
+                coroutineScope {
+                    (1..cores).forEach { core ->
+                        launch {
+                            if (it % 50 == 1)
+                                log.debug("Running solver step $it core $core in ${Thread.currentThread().name}")
+                            while (ctr.get() > 0) {
+                                step(root, ctr)
+                            }
+                        }
+                    }
+                }
+
                 log.info("Finished round $it. Quota = $ctr")
-                focus = sched(it.toDouble()/rounds)
+                focus = sched(it.toDouble() / rounds)
                 onProgress(it, rounds)
                 yield()
-
 
                 if (log.isDebugEnabled && it % 25 == 0) {
                     val leaves = root.leafDepths()
