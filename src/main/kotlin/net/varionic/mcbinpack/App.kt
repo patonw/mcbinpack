@@ -92,8 +92,8 @@ fun main(args: Array<String>) {
 }
 
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME)
-data class ProgressReport(val value: Int, val max: Int, val pct: Int) {
-    constructor(i: Int, n: Int) : this(i, n, (100 * i) / n)
+data class ProgressReport(val value: Int, val max: Int, val pct: Int, val time: Double) {
+    constructor(i: Int, n: Int, t: Long) : this(i, n, (100 * i) / n, t / 1000.0)
 }
 
 // TODO dependency injection
@@ -156,6 +156,7 @@ private fun Routing.handleSocket() {
                             println("Cancelled old task $lastTask")
                         }
 
+                        val startTime = System.currentTimeMillis()
                         val text = frame.readText()
                         val query = mapper.readValue<SampleQuery>(text)
                         val seed = Bin.empty(query.width, query.height)
@@ -174,7 +175,8 @@ private fun Routing.handleSocket() {
 
                         val onProgress: suspend (Int, Int) -> Unit = { i, n ->
                             launch {
-                                val resp = mapper.writeValueAsString(ProgressReport(i, n))
+                                val delta = System.currentTimeMillis() - startTime
+                                val resp = mapper.writeValueAsString(ProgressReport(i, n, delta))
                                 outgoing.send(Frame.Text(resp))
                             }
                         }

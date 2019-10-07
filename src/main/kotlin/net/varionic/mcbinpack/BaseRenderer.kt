@@ -41,7 +41,7 @@ abstract class BaseRenderer<T> {
         var colWidth = 0
         val result: MutableList<Rect> = mutableListOf()
         bin.rejects.forEach {
-            if (yoff > 200) {
+            if (yoff > 300) {
                 yoff = 0
                 xoff += colWidth + 10
                 colWidth = 0

@@ -34,16 +34,15 @@ abstract class Guillotine : Solver {
         }
     }
 
-    fun gatherVacancy(start: Point, end: Point, node: Node) =
-            if (node is Vacancy)
-                listOf(node)
-            else
-                emptyList()
-
-    // Should cache vacancies in a field and update after split
-    fun gatherVacancies(bin: Bin) = bin.traverse(::gatherVacancy) { a, b -> a + b }
+    fun gatherVacancies(bin: Bin) = bin.traverse({ _, _, node ->
+        if (node is Vacancy)
+            listOf(node)
+        else
+            emptyList()
+    }) { a, b -> a + b }
 
     // TODO convert to extension function on Bin
+    // TODO implement finger tree for quick insertion
     fun insertItem(bin: Bin, item: Item, target: Vacancy, splitter: NodeSplitter): Bin {
         val (replacement, newVacs) = splitter(item, target)
         val vacList = bin.vacancies.remove(target).prependAll(newVacs.filterIsInstance<Vacancy>())

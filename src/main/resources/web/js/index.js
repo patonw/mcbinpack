@@ -28,8 +28,9 @@ var vlSpec = {
     point: true
    },
    encoding: {
-     x: {field: 'step', type: 'quantitative', scale: {zero: false}},
+     x: {field: 'time', type: 'quantitative', scale: {zero: true}},
      y: {field: 'score', type: 'quantitative', scale: {zero: false}},
+     tooltip: {field: 'step', type: 'quantitative'}
 //     color: {field: 'category', type: 'nominal'}
    }
  };
@@ -273,6 +274,7 @@ class App extends Component {
                 map(([sol, prog]) => ({
                     type: "score",
                     step: prog.value,
+                    time: prog.time,
                     score: sol.score,
                 })),
             ),
@@ -287,6 +289,7 @@ class App extends Component {
                 map(([prog, sol]) => ({
                     type: "score",
                     step: prog.value,
+                    time: prog.time,
                     score: sol.score,
                 }))
             )
