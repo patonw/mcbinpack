@@ -34,52 +34,6 @@ import kotlinx.coroutines.channels.ticker
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
-val demoData = List.of(
-        Item(30, 41),
-        Item(32, 40),
-        Item(30, 37),
-        Item(30, 47),
-        Item(25, 25),
-        Item(35, 30),
-        Item(60, 42),
-        Item(37, 40),
-        Item(59, 40),
-        Item(30, 80),
-        Item(10, 13),
-        Item(25, 25),
-        Item(25, 30),
-        Item(30, 77),
-        Item(10, 12),
-        Item(25, 25),
-        Item(29, 30),
-        Item(25, 25),
-        Item(8, 26),
-        Item(8, 30),
-        Item(5, 20),
-        Item(30, 40),
-        Item(30, 40),
-        Item(30, 40),
-        Item(30, 40),
-        Item(30, 40),
-        Item(25, 25),
-        Item(30, 30),
-        Item(60, 32),
-        Item(35, 44),
-        Item(60, 40),
-        Item(24, 81),
-        Item(10, 10),
-        Item(25, 25),
-        Item(30, 32),
-        Item(39, 85),
-        Item(10, 10),
-        Item(25, 25),
-        Item(30, 30),
-        Item(25, 25),
-        Item(8, 30),
-        Item(5, 20),
-        Item(30, 40)
-).sortedByDescending { it.width * it.height }.toVavrList()
-
 class App {
     val greeting: String
         get() {
@@ -115,7 +69,7 @@ fun doKtor() {
 
             // Generates a random example problem
             get("/generate") {
-                val query = SampleQuery("mcts", MCTSParams(), 200, 200, demoData.toJavaList())
+                val query = SampleQuery("mcts", MCTSParams(), 200, 200, emptyList())
                 call.respond(query)
             }
 
@@ -126,7 +80,7 @@ fun doKtor() {
 
                 val solver = RandomGuillotineFF()
                 val bin = Bin.empty(query.width, query.height)
-                val sample = solver.insertItems(bin, query.items?.toVavrList() ?: demoData)
+                val sample = solver.insertItems(bin, query.items?.toVavrList() ?: List.empty<Item>())
 
                 call.respond(JsonRenderer().render(sample))
             }
@@ -160,7 +114,7 @@ private fun Routing.handleSocket() {
                         val text = frame.readText()
                         val query = mapper.readValue<SampleQuery>(text)
                         val seed = Bin.empty(query.width, query.height)
-                        val work = (query.items ?: demoData).sortedByDescending { it.width * it.height }.toVavrList()
+                        val work = (query.items ?: List.empty<Item>()).sortedByDescending { it.width * it.height }.toVavrList()
 
                         val onBest: suspend (Bin, Int) -> Unit = { sample, score ->
                             launch {

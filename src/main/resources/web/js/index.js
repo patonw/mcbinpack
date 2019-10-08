@@ -34,7 +34,6 @@ const  vlSpec = {
      x: {field: 'time', type: 'quantitative', scale: {zero: true}},
      y: {field: 'score', type: 'quantitative', scale: {zero: false}},
      tooltip: {field: 'step', type: 'quantitative'}
-//     color: {field: 'category', type: 'nominal'}
    }
  };
 

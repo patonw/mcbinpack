@@ -20,6 +20,8 @@
     - Filling a truck bed when moving so you trash or sell as little as possible
 - Good concrete problem for demonstrating MCTS
 - Concrete and familiar to most people
+- Environment itself is deterministic
+- No need to deal with an opposing player
 - Easy to visualize 2-D cases
 - Not an easy problem theoretically
 - NP-complete meaning probably no efficient way to solve exactly
@@ -201,5 +203,7 @@
     - Only the reference is modified atomically
 
 ## TODO
+- [x] Test coverage
+- [ ] More unit tests
 - [ ] Create a writeup from notes
 - [ ] Ensembling carousel

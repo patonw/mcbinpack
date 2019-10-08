@@ -14,6 +14,7 @@ plugins {
 
     // Apply the application plugin to add support for building a CLI application.
     application
+    jacoco
 }
 
 repositories {
@@ -36,7 +37,7 @@ dependencies {
 
     // Use the Kotlin JUnit integration.
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit")
-
+    testImplementation("org.hamcrest:hamcrest:2.1")
 
     // Logging
     implementation("org.slf4j:slf4j-api:1.7.25")
