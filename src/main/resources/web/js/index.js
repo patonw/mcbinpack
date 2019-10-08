@@ -12,8 +12,11 @@ const spec = localStorage.getItem("spec") || `{
     "height": 300,
     "items": []
 }`
+const vlOpt = {
+    actions: false
+};
 
-var vlSpec = {
+const  vlSpec = {
    $schema: 'https://vega.github.io/schema/vega-lite/v4.json',
    data: {name: 'table'},
    width: 400,
@@ -48,7 +51,7 @@ class History extends Component {
     componentDidMount() {
         const { source } = this.props;
 
-        vegaEmbed(this.ref.current, vlSpec).then(chart => {
+        vegaEmbed(this.ref.current, vlSpec, vlOpt).then(chart => {
             console.log("Started vega chart ", chart);
             source.subscribe(evt => {
                 if (evt.type == "reset") {
