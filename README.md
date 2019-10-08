@@ -1,4 +1,19 @@
-# Monte Carlo Bin Packing
+# Monte Carlo Bin Packing Demo
+## Usage
+- Clone and launch server:
+```
+$ git clone https://github.com/patonw/mcbinpack
+$ cd mcbinpack
+$ ./gradlew run
+```
+
+- Open `http://localhost:8181` in a browser.
+- Specify bin size
+- Add items
+- Adjust parameters
+- Click `Go` to run
+
+Note: requires a fairly modern browser with websocket, local storage and JavaScript module support.
 
 ## Monte Carlo Tree Search
 - Useful in situations where you take a sequence of actions and receive a score
